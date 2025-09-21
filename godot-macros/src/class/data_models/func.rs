@@ -66,7 +66,7 @@ pub fn make_virtual_callback(
         class_name.to_string().as_str(),
         method_name.to_string().as_str(),
     );
-    let invocation = make_ptrcall_invocation(&wrapped_method, true);
+    let invocation = make_ptrcall_invocation(&call_ctx, &wrapped_method, true);
 
     quote! {
         {
@@ -79,9 +79,8 @@ pub fn make_virtual_callback(
                 args_ptr: *const sys::GDExtensionConstTypePtr,
                 ret: sys::GDExtensionTypePtr,
             ) {
-                let call_ctx = #call_ctx;
                 let _success = ::godot::private::handle_ptrcall_panic(
-                    &call_ctx,
+                    #call_ctx,
                     || #invocation
                 );
             }
@@ -117,7 +116,7 @@ pub fn make_method_registration(
     let class_name_str = class_name.to_string();
     let method_name_str = func_definition.godot_name();
 
-    let call_ctx = make_call_context(&class_name_str, &method_name_str);
+    let call_ctx = make_call_context(class_name_str.as_str(), method_name_str.as_str());
     let varcall_fn_decl = make_varcall_fn(&call_ctx, &forwarding_closure);
     let ptrcall_fn_decl = make_ptrcall_fn(&call_ctx, &forwarding_closure);
 
@@ -491,7 +490,7 @@ fn make_method_flags(
 
 /// Generate code for a C FFI function that performs a varcall.
 fn make_varcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> TokenStream {
-    let invocation = make_varcall_invocation(wrapped_method);
+    let invocation = make_varcall_invocation(call_ctx, wrapped_method);
 
     // TODO reduce amount of code generated, by delegating work to a library function. Could even be one that produces this function pointer.
     quote! {
@@ -503,9 +502,8 @@ fn make_varcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> Toke
             ret: sys::GDExtensionVariantPtr,
             err: *mut sys::GDExtensionCallError,
         ) {
-            let call_ctx = #call_ctx;
             ::godot::private::handle_varcall_panic(
-                &call_ctx,
+                #call_ctx,
                 &mut *err,
                 || #invocation
             );
@@ -515,7 +513,7 @@ fn make_varcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> Toke
 
 /// Generate code for a C FFI function that performs a ptrcall.
 fn make_ptrcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> TokenStream {
-    let invocation = make_ptrcall_invocation(wrapped_method, false);
+    let invocation = make_ptrcall_invocation(call_ctx, wrapped_method, false);
 
     quote! {
         unsafe extern "C" fn ptrcall_fn(
@@ -524,9 +522,9 @@ fn make_ptrcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> Toke
             args_ptr: *const sys::GDExtensionConstTypePtr,
             ret: sys::GDExtensionTypePtr,
         ) {
-            let call_ctx = #call_ctx;
             let _success = ::godot::private::handle_panic(
-                || format!("{call_ctx}"),
+
+                || format!("{}", (#call_ctx)()),
                 || #invocation
             );
 
@@ -538,7 +536,11 @@ fn make_ptrcall_fn(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> Toke
 }
 
 /// Generate code for a `ptrcall` call expression.
-fn make_ptrcall_invocation(wrapped_method: &TokenStream, is_virtual: bool) -> TokenStream {
+fn make_ptrcall_invocation(
+    call_ctx: &TokenStream,
+    wrapped_method: &TokenStream,
+    is_virtual: bool,
+) -> TokenStream {
     let ptrcall_type = if is_virtual {
         quote! { sys::PtrcallType::Virtual }
     } else {
@@ -548,7 +550,7 @@ fn make_ptrcall_invocation(wrapped_method: &TokenStream, is_virtual: bool) -> To
     quote! {
         ::godot::meta::Signature::<CallParams, CallRet>::in_ptrcall(
             instance_ptr,
-            &call_ctx,
+            &#call_ctx,
             args_ptr,
             ret,
             #wrapped_method,
@@ -558,11 +560,11 @@ fn make_ptrcall_invocation(wrapped_method: &TokenStream, is_virtual: bool) -> To
 }
 
 /// Generate code for a `varcall()` call expression.
-fn make_varcall_invocation(wrapped_method: &TokenStream) -> TokenStream {
+fn make_varcall_invocation(call_ctx: &TokenStream, wrapped_method: &TokenStream) -> TokenStream {
     quote! {
         ::godot::meta::Signature::<CallParams, CallRet>::in_varcall(
             instance_ptr,
-            &call_ctx,
+            &#call_ctx,
             args_ptr,
             arg_count,
             ret,
@@ -572,8 +574,10 @@ fn make_varcall_invocation(wrapped_method: &TokenStream) -> TokenStream {
     }
 }
 
-fn make_call_context(class_name_str: &str, method_name_str: &str) -> TokenStream {
+fn make_call_context(class_name: &str, method_name: &str) -> TokenStream {
     quote! {
-        ::godot::meta::CallContext::func(#class_name_str, #method_name_str)
+        || {
+            ::godot::meta::CallContext::func((#class_name).to_string(), (#method_name).to_string())
+        }
     }
 }
