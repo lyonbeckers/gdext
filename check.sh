@@ -205,9 +205,6 @@ while [[ $# -gt 0 ]]; do
             echo "$HELP_TEXT"
             exit 0
             ;;
-        --release)
-            extraCargoArgs+=("--release")
-            ;;
         --use-serde)
             extraCargoArgs+=("--features" "serde")
             ;;
