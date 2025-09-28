@@ -31,3 +31,64 @@ pub fn bench_used<T: Sized>(value: T) {
 
     std::hint::black_box(value);
 }
+
+#[cfg(since_api = "4.5")]
+mod itest_error_logger {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use godot::builtin::{Array, GString};
+    use godot::classes::{ILogger, Logger, Os, ScriptBacktrace};
+    use godot::meta::GodotType;
+    use godot::obj::{Base, Gd, Singleton};
+    use godot::register::{godot_api, GodotClass};
+
+    #[derive(GodotClass)]
+    #[class(no_init, base = Logger)]
+    pub struct ItestErrorLogger {
+        expected_error: GString,
+        was_error_called: AtomicBool,
+        base: Base<Logger>,
+    }
+
+    impl ItestErrorLogger {
+        pub fn was_error_called(&self) -> bool {
+            self.was_error_called.fetch_or(false, Ordering::Relaxed)
+        }
+    }
+
+    #[godot_api]
+    impl ILogger for ItestErrorLogger {
+        fn log_error(
+            &mut self,
+            _function: GString,
+            _file: GString,
+            _line: i32,
+            code: GString,
+            _rationale: GString,
+            _editor_notify: bool,
+            _error_type: i32,
+            _backtrace: Array<Gd<ScriptBacktrace>>,
+        ) {
+            if code == self.expected_error {
+                self.was_error_called.store(true, Ordering::Relaxed)
+            }
+        }
+    }
+
+    pub fn itest_logger(expected_error: GString) -> Gd<ItestErrorLogger> {
+        // We need to register ScriptBacktrace ClassID beforehand – otherwise it might be tried to be initialized from different thread (or two threads at once).
+        let _script_backtrace = Gd::<ScriptBacktrace>::class_id();
+        let logger = Gd::from_init_fn(|base| ItestErrorLogger {
+            expected_error,
+            was_error_called: AtomicBool::new(false),
+            base,
+        });
+        Os::singleton().add_logger(&logger);
+
+        logger
+    }
+}
+
+#[allow(unused)]
+#[cfg(since_api = "4.5")]
+pub use itest_error_logger::*;
