@@ -762,4 +762,89 @@ pub mod custom_callable {
             panic!("TEST: {}", self.0.fetch_add(1, Ordering::SeqCst))
         }
     }
+
+    #[cfg(since_api = "4.5")]
+    mod custom_callable_panics {
+
+        use super::*;
+        use godot::classes::{ILogger, Logger, Os};
+        use godot::meta::GodotType;
+        use godot::obj::{Base, Singleton};
+
+        #[itest]
+        fn callable_context_custom_panic() {
+            let logger = GodotRustLogger::new_gd();
+            Os::singleton().add_logger(&logger);
+
+            let received = Arc::new(AtomicU32::new(0));
+            let callable = Callable::from_custom(PanicCallable(received));
+            callable.callv(&varray![]);
+
+            let function_name = if cfg!(debug_assertions) {
+                "test"
+            } else {
+                "<optimized out>"
+            };
+            let expected_msg = format!("godot-rust function call failed: <Callable>::{}()\n    Reason: function panicked: TEST: 0", function_name);
+
+            assert_eq!(*logger.bind().error.lock().unwrap(), expected_msg);
+
+            Os::singleton().remove_logger(&logger);
+        }
+
+        #[itest]
+        fn callable_context_rust_fn_panic() {
+            let logger = GodotRustLogger::new_gd();
+            Os::singleton().add_logger(&logger);
+
+            let callable = Callable::from_local_fn("test", |_args| -> Variant { panic!("ahh") });
+            callable.callv(&varray![]);
+
+            let function_name = if cfg!(debug_assertions) {
+                "test"
+            } else {
+                "<optimized out>"
+            };
+            let expected_msg = format!(
+            "godot-rust function call failed: <Callable>::{}()\n    Reason: function panicked: ahh",
+            function_name
+        );
+
+            assert_eq!(*logger.bind().error.lock().unwrap(), expected_msg);
+            Os::singleton().remove_logger(&logger);
+        }
+
+        #[derive(GodotClass)]
+        #[class(base = Logger)]
+        pub struct GodotRustLogger {
+            error: Mutex<String>,
+            base: Base<Logger>,
+        }
+
+        #[godot_api]
+        impl ILogger for GodotRustLogger {
+            fn init(base: Base<Logger>) -> Self {
+                let _script_backtrace = Gd::<godot::classes::ScriptBacktrace>::class_id();
+                Self {
+                    base,
+                    error: Mutex::new(String::new()),
+                }
+            }
+
+            fn log_error(
+                &mut self,
+                _function: GString,
+                _file: GString,
+                _line: i32,
+                code: GString,
+                _rationale: GString,
+                _editor_notify: bool,
+                _error_type: i32,
+                _backtrace: Array<godot::prelude::Gd<godot::classes::ScriptBacktrace>>,
+            ) {
+                let mut val = self.error.lock().unwrap();
+                *val = code.to_string();
+            }
+        }
+    }
 }
